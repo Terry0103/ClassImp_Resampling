@@ -8,13 +8,54 @@ from dataclasses import dataclass, field
 
 @dataclass(slots = True)
 class ClassImpurity:
+    '''
+    ## A k-nearest neighbor-based measure for estimating the degree of class impurity of an instance in supervised tasks
+    n_neighbors : int, defalut = 3
+        Number of neighbors to use by default for kneighbors
+
+    kNN : sklearn.neighbors.NearestNeighbors, default = None
+        Unsupervised learner for implementing neighbor searches which from sklear.neighbors
+    ---    
+    ## Artributes
+    class_impurity : numpy.array
+        The fitted class impurity.
+    ---
+    ## Example
+    >>> from ClassImp_Resampling.ClassImp import ClassImpurity
+    >>> import pandas as pd
+    >>> test = pd.DataFrame([[1, 2, 1], [1, 0, 1], [10, 4, 0], [10, 0, 0], [10, 2, 0], [1, 4, 1], [10, 4, 0], [10, 4, 0], [10, 4, 0], [10, 4, 0]])
+    
+    >>> cls_imp = ClassImpurity()
+    >>> cls_imp.fit_class_impurity(X = test.iloc[:, 0:-1], Y = test.iloc[:, -1])
+    >>> print(cls_imp.class_impurity)
+    ... [[0.25 ]
+    ... [0.375]
+    ... [0.125]
+    ... [0.25 ]
+    ... [0.125]
+    ... [0.375]
+    ... [0.125]
+    ... [0.125]
+    ... [0.125]
+    ... [0.125]]
+    '''
     n_neighbors: int = 3
     kNN: NearestNeighbors = None
+    class_impurity: np.ndarray = field(init = False)
     # def __init__(self, n_neighbors : int = 3, kNN : NearestNeighbors() = None):
     #     self.n_neighbors = n_neighbors
     #     self.kNN = kNN
         
     def fit_class_impurity(self, X = None, Y = None) -> dict():
+        '''
+        Fit the class impurity from the training dataset.
+        ## Parameters
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            Training data.
+
+        Y : array-like of shape
+            The target of training data.
+        '''
         X = np.array(X)
         Y = np.array(Y)
         # self.__recog_minority__(Y)
@@ -24,12 +65,17 @@ class ClassImpurity:
         self.kNN = self.kNN.set_params(**{'n_neighbors' : X.shape[0],}) # Euclidean distance
         # KNN = KNN.set_params(**{'n_neighbors' : data.shape[0], \ # Mahalanobi's distance
         # 'metric' : 'mahalanobis', 'metric_params' : {'VI' : np.linalg.inv(np.cov(data.iloc[:, 0:-1].T))}})
+        if '_fit_X' not in self.kNN.__dict__:
+            self.kNN.fit(X = X)
 
-        return self.__compute_class_impurity__(X, Y)
+        return self.__compute_class_impurity(X, Y)
 
     # TODO: if it's possible, for loop should be transformed to matrix form.
-    def __compute_relative_density__(self, X, Y) -> np.array:
-        
+
+    def __compute_relative_density(self, X, Y) -> np.array:
+        '''
+        Computing relative density among the k-nearest neighbors of the instances
+        '''
         _distances, _indices = self.kNN.kneighbors(X)
 
         # the reason of put {[:, 1:]} here is to exclude the original point
@@ -54,8 +100,10 @@ class ClassImpurity:
         del HON_dist, HEN_dist, HON_indices, HEN_indices,sum_HONK_dist , sum_HENK_dist, _distances, _indices
         return relative_density
 
-    def __compute_kNN_ratio__(self, X, Y) -> np.array:
-
+    def __compute_kNN_ratio(self, X, Y) -> np.array:
+        '''
+        Computing the class proportion among the k-nearest neighbors of the instances
+        '''
         _distances, _indices = self.kNN.kneighbors(X)
         kNN_ratio = np.where(Y[_indices] == np.tile(Y, (_indices.shape[0], 1)).T, 1, 0)[:, 1:4].sum(axis = 1) / self.n_neighbors
         kNN_ratio = kNN_ratio.reshape((kNN_ratio.shape[0], 1))
@@ -63,11 +111,14 @@ class ClassImpurity:
         del _distances, _indices
         return kNN_ratio
 
-    def __compute_class_impurity__(self, X, Y) -> np.array:
+    def __compute_class_impurity(self, X, Y) -> np.array:
+        '''
+        Aggregaing k-NN ratio and relative density into `class impurity`.
+        '''
 
         # Computing class purity
-        RD = self.__compute_relative_density__(X, Y)
-        kNN_ratio = self.__compute_kNN_ratio__(X, Y)
+        RD = self.__compute_relative_density(X, Y)
+        kNN_ratio = self.__compute_kNN_ratio(X, Y)
         purity = RD * kNN_ratio
         del RD, kNN_ratio
 
@@ -84,21 +135,28 @@ class ClassImpurity:
             sum_purity = purity[label_id, :].sum()
             purity[label_id, :] = purity[label_id, :] / sum_purity
 
-        impurity = purity
+        self.class_impurity = purity
         del purity, label_id, sum_purity
-        return impurity
+        return self
 
     def __recog_minority__(self, Y):
+        '''
+        Recognizing the minority class in the training data.
+        '''
         labels, counts = np.unique(Y, return_counts = True)
 
         label_index = np.where(counts == min(counts))
         self.minority_class_label = labels[label_index][0]
         # G = sum(counts) - counts[label_index]
         del labels, counts, label_index 
+    
+    def __str__(self) -> str:
+        return f'ClassImpurity(n_neighbors={self.n_neighbors}, kNN={self.kNN}, class_impurity={self.class_impurity}' 
+
 
 class IHOT(ClassImpurity):
     '''
-    ## A movel class impurity-based hybrid resampling technique for imbalanced classification problem
+    ## A novel class impurity-based hybrid resampling technique for imbalanced classification problem
     ---
     n_neighbors : int, defalut = 3
         Parameter of the k-nearest neighbor algorithm.
@@ -117,6 +175,8 @@ class IHOT(ClassImpurity):
         The maximun number of time that classification performance saturated. When max_saturation is reached \
               the algorithm will terminate and return the best_balanced_data.
 
+    metric: Any, default = sklearn.metric.roc_auc_score
+        The evaluation metric which is used in optimal dataset searching.
     ---    
     ## Artributes
 
@@ -154,15 +214,18 @@ class IHOT(ClassImpurity):
     
     def __init__(self, 
                  n_neighbors : int = 3, 
-                 classifier = None, kNN = None, 
+                 classifier = None, 
+                 kNN = None, 
                  optimization : Literal['best', 'saturation'] = 'best', 
-                 max_saturation :int = 3):
-        # super().__init__() # Inherit all element from class `ClassImpurity`
+                 max_saturation :int = 3,
+                 metric: any = roc_auc_score):
+        # super().__init__(n_neighbors, kNN) # Inherit all element from class `ClassImpurity`
         self.n_neighbors = n_neighbors
         self.kNN = kNN
         self.classifier = classifier
         self.optimization = optimization
         self.max_saturation = max_saturation
+        self.metric = metric
 
         self.__saturation_count__ = 0
         self.best_score = 0
@@ -170,7 +233,7 @@ class IHOT(ClassImpurity):
         
     def fit_resample(self, X, Y):
         '''
-        ### Fit `IHOT` algorithm
+        Fit `IHOT` algorithm
         '''
         # Initializing
         X = np.array(X)
@@ -180,7 +243,7 @@ class IHOT(ClassImpurity):
         # If kNN model is not given, Euclidean distance is used when fitting k-NN of instances.
         if self.kNN == None:
             self.kNN = NearestNeighbors()
-        self.kNN = self.kNN.set_params(**{'n_neighbors' : X.shape[0], })
+        
 
         # Hybrid resampling
         X, Y = self.__undersampling__(X, Y)
@@ -193,17 +256,20 @@ class IHOT(ClassImpurity):
         According to the relationship between a majority class instance to its' nearest neighbor, the majority class instances\
         are adaptively undersampling until there is no the nearest neighbor of any majority class instance belongs to minroity class.
         '''
+
         stop = False
         while stop == False:
             
             # For each majority class instances
             majority_id = np.where(Y != self.minority_class_label)[0]
 
+            # self.kNN = self.kNN.set_params(**{'n_neighbors' : X.shape[0]})
             self.kNN.fit(X = X)
             _distance, _indices = self.kNN.kneighbors(X = X, n_neighbors = X.shape[0])
             # If the nearest neighbor of any majority class instance belong to minroty class, then undersampling
             if np.where(Y[_indices[majority_id, 1]] == self.minority_class_label, 1, 0).sum() != 0:
-                class_impurity = self.fit_class_impurity(X, Y)
+                self.fit_class_impurity(X, Y)
+                class_impurity = self.class_impurity
                 sorted_majority_id = sorted(majority_id, key = lambda x: class_impurity[x], reverse = True)
                 remove_maj_list = sorted_majority_id[:math.ceil(len(sorted_majority_id) * 0.01)]
             else:
@@ -221,6 +287,8 @@ class IHOT(ClassImpurity):
                 del u, c
                 break
 
+            self.class_impurity = None
+
         # End while
         return X, Y
     
@@ -232,7 +300,7 @@ class IHOT(ClassImpurity):
         # Initializing the oversampling
         self.classifier.fit(X, Y)
         pred = self.classifier.predict(X)
-        self.best_score =  roc_auc_score(Y, pred)
+        self.best_score =  self.metric(Y, pred)
         self.best_balanced_data = X, Y
 
         X_prime = X
@@ -243,7 +311,8 @@ class IHOT(ClassImpurity):
         _distance, _indices = self.kNN.kneighbors(X = X, n_neighbors = X.shape[0])
 
         # Sorting minority class instances by thier class impurity
-        class_impurity = self.fit_class_impurity(X, Y)
+        self.fit_class_impurity(X, Y)
+        class_impurity = self.class_impurity
         minority_id = np.where(Y == self.minority_class_label)[0]
         sorted_minority_id = sorted(minority_id, key = lambda x: class_impurity[x], reverse = True)
         G = max(np.unique(Y, return_counts = True)[1]) - min(np.unique(Y, return_counts = True)[1])
@@ -259,7 +328,7 @@ class IHOT(ClassImpurity):
                 # SMOTE
                 root_index = min_instance 
                 candi_index = np.random.choice(
-                    self.__minority_SMOTE_candidate__(X, Y, min_instance),
+                    self.__minority_SMOTE_candidate(X, Y, min_instance),
                     size = g,
                     replace = True,
                     )
@@ -287,8 +356,8 @@ class IHOT(ClassImpurity):
             pred = self.classifier.predict(X_prime)
 
             # If classification performance is improved, the best dataset is updated by the current dataset.
-            if self.best_score < roc_auc_score(Y_prime, pred):
-                self.best_score = roc_auc_score(Y_prime, pred)
+            if self.best_score < self.metric(Y_prime, pred):
+                self.best_score = self.metric(Y_prime, pred)
                 self.best_balanced_data = X_prime, Y_prime
                 self.__saturation_count__ = 0
             else:
@@ -301,7 +370,7 @@ class IHOT(ClassImpurity):
 
         return self.best_balanced_data
     
-    def __minority_SMOTE_candidate__(self, X, Y, id) -> np.array:
+    def __minority_SMOTE_candidate(self, X, Y, id) -> np.array:
         '''
         Finding the interpolating candidates of minority class instances which the nearest neighbor belongs to minority class. \
         Candidates are the minority class instances among the k-NN and closer than the nearest majority class neighbor of a minoeirty class instance.
